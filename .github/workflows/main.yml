@@ -1,0 +1,102 @@
+name: Codespace Automation
+
+on:
+  workflow_dispatch:  # Permite ejecución manual
+  schedule:
+    - cron: '0 8 * * 1-5'  # Ejecutar días laborables a las 8 AM
+
+jobs:
+  codespace-task:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Iniciar Codespace
+        id: start-codespace
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PAT }}
+          script: |
+            try {
+              const response = await github.request(
+                'POST /user/codespaces/{codespace_name}/start', {
+                  codespace_name: 'studious dollop'  # Nombre real del codespace
+                }
+              );
+              console.log('Codespace iniciado: ', response.data);
+              return response.status;
+            } catch (error) {
+              console.log('Error iniciando codespace: ', error);
+              throw error;
+            }
+
+      - name: Esperar a que el Codespace esté disponible
+        run: |
+          echo "Esperando a que el codespace esté disponible..."
+          for i in {1..12}; do
+            status=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
+            "https://api.github.com/user/codespaces/studious dollop" | \
+            grep -o '"state":"[^"]*"' | cut -d'"' -f4)
+            
+            if [ "$status" = "Available" ]; then
+              echo "Codespace está disponible"
+              break
+            fi
+            
+            echo "Intento $i: Codespace status: $status. Esperando 10 segundos..."
+            sleep 10
+          done
+          
+          if [ "$status" != "Available" ]; then
+            echo "Error: Codespace no está disponible después de 2 minutos"
+            exit 1
+          fi
+
+      - name: Obtener detalles del Codespace
+        id: codespace-details
+        run: |
+          response=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
+          "https://api.github.com/user/codespaces/studious dollop")
+          
+          # Extraer información importante
+          machine_name=$(echo "$response" | grep -o '"machine_display_name":"[^"]*"' | cut -d'"' -f4)
+          created_at=$(echo "$response" | grep -o '"created_at":"[^"]*"' | cut -d'"' -f4)
+          
+          echo "machine_name=$machine_name" >> $GITHUB_OUTPUT
+          echo "created_at=$created_at" >> $GITHUB_OUTPUT
+          echo "Detalles del Codespace:"
+          echo "Máquina: $machine_name"
+          echo "Creado: $created_at"
+
+      - name: Ejecutar comandos en el Codespace
+        run: |
+          echo "Ejecutando comandos en el codespace..."
+          
+          # Comando 1: Navegar al directorio y listar contenido
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.PAT }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -d '{"command":"cd /workspaces/GLMCookies && ls -la", "working_directory":"/workspaces/GLMCookies"}' \
+            "https://api.github.com/user/codespaces/studious dollop/commands" || echo "Comando 1 ejecutado"
+          
+          sleep 5
+          
+          # Comando 2: Verificar versión de Python
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.PAT }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -d '{"command":"python --version", "working_directory":"/workspaces/GLMCookies"}' \
+            "https://api.github.com/user/codespaces/studious dollop/commands" || echo "Comando 2 ejecutado"
+          
+          # Comando 3: Instalar dependencias (si existe requirements.txt)
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.PAT }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -d '{"command":"pip install -r requirements.txt", "working_directory":"/workspaces/GLMCookies"}' \
+            "https://api.github.com/user/codespaces/studious dollop/commands" || echo "Comando 3 ejecutado"
+
+      - name: Detener Codespace
+        if: always()
+        run: |
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.PAT }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/user/codespaces/studious dollop/stop" || echo "Codespace detenido"
