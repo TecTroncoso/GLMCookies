@@ -7,13 +7,14 @@ import uuid
 import shutil
 import zipfile
 from selenium import webdriver
-import os
+
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+import sys
 
 # --- CONFIGURACIÓN ---
 AUTH_URL = "https://chat.z.ai/auth"
@@ -21,13 +22,65 @@ GITHUB_LOGIN_URL = "https://github.com/login"
 # Cambiamos la ruta a una ubicación accesible en el Codespace
 CHROME_PROFILE_PATH = os.path.join(os.getcwd(), "chrome_profile_qwen")  # Ruta relativa al directorio actual
 ZIP_FILE_PATH = os.path.join(os.getcwd(), "chrome_profile_qwen.zip")  # Ruta para el archivo ZIP
+COOKIES_FILE = "cookies.json"  # Definimos la ruta del archivo de cookies
 
 # --- CREDENCIALES (desde variables de entorno) ---
 USERNAME = os.environ.get("GLM_USERNAME", "")
 PASSWORD = os.environ.get("GLM_PASSWORD", "")
 
 if not USERNAME or not PASSWORD:
-    raise RuntimeError("Faltan las variables de entorno QWEN_USERNAME y QWEN_PASSWORD")
+    raise RuntimeError("Faltan las variables de entorno GLM_USERNAME y GLM_PASSWORD")
+
+# --- FUNCIÓN PARA GUARDAR COOKIES ---
+def save_cookies(cookies):
+    """Guarda las cookies en el archivo cookies.json, sobrescribiendo si existe"""
+    print(f"🍪 Guardando {len(cookies)} cookies en {COOKIES_FILE}...")
+    with open(COOKIES_FILE, "w") as f:
+        json.dump(cookies, f, indent=4)
+    print(f"✅ Cookies guardadas exitosamente en '{COOKIES_FILE}' (sobrescribiendo si existía).")
+
+# --- FUNCIÓN PARA VERIFICAR SESIÓN PERSISTENTE ---
+def check_existing_session():
+    """Verifica si existe una sesión persistente válida"""
+    global driver
+    
+    print("✅ Perfil de Chrome existente encontrado. Intentando reutilizar sesión...")
+    
+    # Primero intentamos cargar la página principal directamente
+    print("Inicializando el driver de Chrome con perfil existente...")
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
+    wait = WebDriverWait(driver, 15)
+    
+    print("Navegando a la página principal para verificar sesión...")
+    driver.get("https://chat.z.ai/")
+    time.sleep(3)
+    
+    # Verificar si ya estamos logueados
+    try:
+        chat_textarea = wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "textarea[placeholder*='How can I help you today?']"))
+        )
+        print("✅ ¡Sesión persistente encontrada! Ya estamos logueados.")
+        
+        # Guardar cookies (esto sobrescribirá el archivo si existe)
+        cookies = driver.get_cookies()
+        save_cookies(cookies)
+        
+        # Tomar captura de confirmación
+        driver.save_screenshot("session_persisted.png")
+        print("📸 Captura de sesión persistente guardada.")
+        
+        # Cerrar el driver y terminar la ejecución exitosamente
+        driver.quit()
+        print("✅ Sesión persistente verificada y cookies guardadas. Proceso finalizado.")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error al verificar sesión persistente: {e}")
+        driver.save_screenshot("session_check_error.png")
+        driver.quit()
+        return False
 
 # --- OPCIONES DE CHROME ---
 options = webdriver.ChromeOptions()
@@ -51,43 +104,12 @@ try:
     # Verificar si ya existe una sesión guardada
     profile_exists = os.path.exists(CHROME_PROFILE_PATH) and os.listdir(CHROME_PROFILE_PATH)
     if profile_exists:
-        print("✅ Perfil de Chrome existente encontrado. Intentando reutilizar sesión...")
-        
-        # Primero intentamos cargar la página principal directamente
-        print("Inicializando el driver de Chrome con perfil existente...")
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        wait = WebDriverWait(driver, 15)
-        
-        print("Navegando a la página principal para verificar sesión...")
-        driver.get("https://chat.z.ai/")
-        time.sleep(3)
-        
-        # Verificar si ya estamos logueados
-        try:
-            chat_textarea = driver.find_element(By.CSS_SELECTOR, "textarea[placeholder*='How can I help you today?']")
-            print("✅ ¡Sesión persistente encontrada! Ya estamos logueados.")
-            
-            # Guardar cookies de todas formas por si acaso
-            cookies = driver.get_cookies()
-            print(f"🍪 Se han obtenido {len(cookies)} cookies de la sesión persistente.")
-            with open("cookies.json", "w") as f:
-                json.dump(cookies, f, indent=4)
-            print("✅ Cookies guardadas exitosamente en 'cookies.json'.")
-            
-            # Tomar captura de confirmación
-            driver.save_screenshot("session_persisted.png")
-            print("📸 Captura de sesión persistente guardada.")
-            
-            # Salir exitosamente
-            driver.quit()
-            exit(0)
-            
-        except:
-            print("❌ No hay sesión activa en el perfil. Procediendo con login completo...")
-            driver.quit()
+        # Si la sesión persistente es válida, terminamos aquí
+        if check_existing_session():
+            sys.exit(0)
     
-    # Si no hay perfil o la sesión expiró, hacemos login completo
+    # Si no hay perfil o la sesión no es válida, hacemos login completo
+    print("❌ No hay sesión activa en el perfil. Procediendo con login completo...")
     print("Inicializando el driver de Chrome para login completo...")
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
@@ -252,10 +274,7 @@ try:
     
     # PASO 9: Obtener y guardar las cookies
     cookies = driver.get_cookies()
-    print(f"🍪 Se han obtenido {len(cookies)} cookies.")
-    with open("cookies.json", "w") as f:
-        json.dump(cookies, f, indent=4)
-    print("✅ Cookies guardadas exitosamente en 'cookies.json'.")
+    save_cookies(cookies)  # Usamos nuestra función para guardar las cookies
 
 except Exception as e:
     print("\n--- ❌ OCURRIÓ UN ERROR DURANTE LA EJECUCIÓN ---")
