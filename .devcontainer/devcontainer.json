@@ -1,0 +1,15 @@
+{
+    "name": "Python 3 with Manual Chrome Install",
+    "image": "mcr.microsoft.com/devcontainers/python:3.10",
+    
+    "postCreateCommand": "sudo apt-get update && sudo apt-get install -y wget gnupg && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg && sudo sh -c 'echo \"deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main\" >> /etc/apt/sources.list.d/google.list' && sudo apt-get update && sudo apt-get install -y google-chrome-stable && pip install -r requirements.txt",
+
+    "customizations": {
+        "vscode": {
+            "settings": {},
+            "extensions": [
+                "ms-python.python"
+            ]
+        }
+    }
+}
