@@ -34,7 +34,7 @@ jobs:
         run: |
           echo "Buscando codespace para el repositorio ${{ github.repository }}..."
           
-          # Obtener la lista de codespaces con los campos disponibles
+          # Obtener la lista de codespaces
           response=$(gh codespace list --json name,repository,state,displayName)
           
           # Mostrar la respuesta para depuración
@@ -42,15 +42,12 @@ jobs:
           echo "$response" | jq .
           
           # Extraer el nombre del codespace para este repositorio
-          # El campo repository es un string simple, no un objeto
           codespace_name=$(echo "$response" | jq -r ".[] | select(.repository == \"${{ github.repository }}\") | .name")
           codespace_display=$(echo "$response" | jq -r ".[] | select(.repository == \"${{ github.repository }}\") | .displayName")
           codespace_state=$(echo "$response" | jq -r ".[] | select(.repository == \"${{ github.repository }}\") | .state")
           
           if [ "$codespace_name" = "null" ] || [ -z "$codespace_name" ]; then
             echo "Error: No se encontró un codespace para el repositorio ${{ github.repository }}"
-            echo "Respuesta completa:"
-            echo "$response" | jq .
             exit 1
           fi
           
@@ -99,22 +96,52 @@ jobs:
             exit 1
           fi
 
-      - name: Ejecutar comandos en el Codespace
+      - name: Ejecutar comandos usando lifecycle commands
         run: |
-          echo "Ejecutando comandos en el codespace..."
+          echo "Configurando comandos automáticos en el codespace..."
           CODESPACE_NAME="${{ steps.get-codespace-info.outputs.codespace_name }}"
           
-          # Comando 1: Navegar al directorio y listar contenido
-          echo "📂 Ejecutando comando 1: Listar contenido del directorio"
-          gh codespace ssh -c "$CODESPACE_NAME" -- "cd /workspaces/GLMCookies && ls -la"
+          # Obtener detalles del codespace para ver la configuración actual
+          echo "Obteniendo configuración actual del codespace..."
+          gh codespace view -c "$CODESPACE_NAME"
           
-          # Comando 2: Verificar versión de Python
-          echo "🐍 Ejecutando comando 2: Verificar versión de Python"
-          gh codespace ssh -c "$CODESPACE_NAME" -- "python --version"
-          
-          # Comando 3: Instalar dependencias (si existe requirements.txt)
-          echo "📦 Ejecutando comando 3: Instalar dependencias"
-          gh codespace ssh -c "$CODESPACE_NAME" -- "cd /workspaces/GLMCookies && pip install -r requirements.txt"
+          # Nota: Los comandos deben ejecutarse a través del ciclo de vida del contenedor
+          # o mediante la reconstrucción del codespace con los comandos apropiados
+          echo "Para ejecutar comandos automáticamente, reconstruye el codespace con:"
+          echo "1. Agrega 'postStartCommand' a tu devcontainer.json"
+          echo "2. O usa 'gh codespace rebuild' para aplicar los cambios"
+
+      - name: Mostrar instrucciones para configuración manual
+        run: |
+          echo "📋 INSTRUCCIONES PARA CONFIGURAR COMANDOS AUTOMÁTICOS:"
+          echo ""
+          echo "Opción 1: Agregar SSH server (recomendado)"
+          echo "------------------------------------------"
+          echo "Agrega esto a tu .devcontainer/devcontainer.json:"
+          echo '{
+  "features": {
+    "ghcr.io/devcontainers/features/sshd:1": {
+      "version": "latest"
+    }
+  }
+}'
+          echo ""
+          echo "Luego reconstruye tu codespace:"
+          echo "gh codespace rebuild -c NOMBRE_DEL_CODESPACE"
+          echo ""
+          echo "Opción 2: Usar comandos de ciclo de vida"
+          echo "----------------------------------------"
+          echo "Agrega esto a tu .devcontainer/devcontainer.json:"
+          echo '{
+  "postStartCommand": "cd /workspaces/GLMCookies && ls -la && python --version && pip install -r requirements.txt"
+}'
+          echo ""
+          echo "Opción 3: Ejecutar manualmente"
+          echo "--------------------------------"
+          echo "Conéctate al codespace manualmente:"
+          echo "gh codespace code -c NOMBRE_DEL_CODESPACE"
+          echo ""
+          echo "Y ejecuta los comandos en la terminal integrada."
 
       - name: Detener Codespace
         if: always()
