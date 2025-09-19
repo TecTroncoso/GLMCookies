@@ -42,9 +42,10 @@ jobs:
           echo "$response" | jq .
           
           # Extraer el nombre del codespace para este repositorio
-          # El campo repository es un objeto con la propiedad fullName
-          codespace_name=$(echo "$response" | jq -r '.[] | select(.repository.fullName == "${{ github.repository }}") | .name')
-          codespace_display=$(echo "$response" | jq -r '.[] | select(.repository.fullName == "${{ github.repository }}") | .displayName')
+          # El campo repository es un string simple, no un objeto
+          codespace_name=$(echo "$response" | jq -r ".[] | select(.repository == \"${{ github.repository }}\") | .name")
+          codespace_display=$(echo "$response" | jq -r ".[] | select(.repository == \"${{ github.repository }}\") | .displayName")
+          codespace_state=$(echo "$response" | jq -r ".[] | select(.repository == \"${{ github.repository }}\") | .state")
           
           if [ "$codespace_name" = "null" ] || [ -z "$codespace_name" ]; then
             echo "Error: No se encontró un codespace para el repositorio ${{ github.repository }}"
@@ -53,17 +54,21 @@ jobs:
             exit 1
           fi
           
-          echo "Codespace encontrado: $codespace_name (Display: $codespace_display)"
+          echo "Codespace encontrado: $codespace_name"
+          echo "Display Name: $codespace_display"
+          echo "Estado actual: $codespace_state"
           echo "codespace_name=$codespace_name" >> $GITHUB_OUTPUT
           echo "codespace_display=$codespace_display" >> $GITHUB_OUTPUT
+          echo "codespace_state=$codespace_state" >> $GITHUB_OUTPUT
 
-      - name: Iniciar Codespace
-        id: start-codespace
+      - name: Iniciar Codespace (si está apagado)
+        if: steps.get-codespace-info.outputs.codespace_state != 'Available'
         run: |
           echo "Iniciando codespace: ${{ steps.get-codespace-info.outputs.codespace_name }}"
           gh codespace start -c "${{ steps.get-codespace-info.outputs.codespace_name }}"
 
-      - name: Esperar a que el Codespace esté disponible
+      - name: Esperar a que el Codespace esté disponible (si se inició)
+        if: steps.get-codespace-info.outputs.codespace_state != 'Available'
         run: |
           echo "Esperando a que el codespace esté disponible (tiempo máximo: 15 minutos)..."
           CODESPACE_NAME="${{ steps.get-codespace-info.outputs.codespace_name }}"
