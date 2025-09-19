@@ -1,100 +1,40 @@
-name: Codespace Automation
+name: Inspect PAT Secret
 
 on:
-  workflow_dispatch:  # Permite ejecución manual
-  schedule:
-    - cron: '0 8 * * 1-5'  # Ejecutar días laborables a las 8 AM
+  workflow_dispatch: # Permite ejecución manual
 
 jobs:
-  codespace-task:
+  inspect-secret:
     runs-on: ubuntu-latest
     steps:
-      - name: Listar Codespaces y obtener información
-        id: get-codespace-info
+      - name: Inspect the PAT secret to verify its format
         run: |
-          echo "Buscando codespace para el repositorio ${{ github.repository }}..."
-          response=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/user/codespaces")
+          echo "Inspeccionando el secreto PAT..."
+          SECRET_VALUE="${{ secrets.PAT }}"
           
-          codespace_name=$(echo "$response" | jq -r --arg repo "${{ github.repository }}" '.codespaces[] | select(.repository.full_name == $repo) | .name')
-          
-          if [ -z "$codespace_name" ]; then
-            echo "Error: No se encontró un codespace para el repositorio ${{ github.repository }}"
+          if [ -z "$SECRET_VALUE" ]; then
+            echo "::error:: ¡El secreto PAT está completamente vacío! Por favor, verifica que el secreto existe y tiene un valor."
             exit 1
           fi
           
-          echo "Codespace encontrado: $codespace_name"
-          echo "codespace_name=$codespace_name" >> $GITHUB_OUTPUT
+          LENGTH=${#SECRET_VALUE}
+          echo "Longitud del secreto: $LENGTH caracteres."
+          
+          # Un Token (Classic) siempre tiene 40 caracteres.
+          if [ "$LENGTH" -ne 40 ]; then
+            echo "::error:: La longitud NO es 40. Un Token (Classic) válido siempre tiene 40 caracteres. Esto indica un error al copiar/pegar o un tipo de token incorrecto."
+          else
+            echo "✅ La longitud es la correcta (40 caracteres)."
+          fi
 
-      - name: Iniciar Codespace
-        id: start-codespace
-        run: |
-          CODESPACE_NAME="${{ steps.get-codespace-info.outputs.codespace_name }}"
-          echo "Iniciando codespace: $CODESPACE_NAME"
-          curl -f -X POST \
-            -H "Authorization: token ${{ secrets.PAT }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/user/codespaces/$CODESPACE_NAME/start"
+          PREFIX=$(echo "$SECRET_VALUE" | cut -c 1-4)
+          
+          # Un Token (Classic) siempre empieza con 'ghp_'.
+          if [ "$PREFIX" = "ghp_" ]; then
+            echo "✅ El prefijo del secreto es 'ghp_', que corresponde a un Token (Classic)."
+          else
+            echo "::error:: ¡El prefijo NO es 'ghp_'! El token que estás usando NO es un Token (Classic). Probablemente es un 'Fine-grained token'. Este es el origen del problema."
+            exit 1
+          fi
 
-      - name: Esperar a que el Codespace esté disponible
-        run: |
-          CODESPACE_NAME="${{ steps.get-codespace-info.outputs.codespace_name }}"
-          echo "Esperando a que el codespace '$CODESPACE_NAME' esté disponible (tiempo máximo: 15 minutos)..."
-          
-          for i in {1..90}; do
-            response=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/user/codespaces/$CODESPACE_NAME")
-            
-            status=$(echo "$response" | jq -r '.state')
-            echo "Intento $i: Estado actual es '$status'"
-            
-            if [ "$status" = "Available" ]; then
-              echo "✅ Codespace está disponible."
-              exit 0
-            fi
-            sleep 10
-          done
-          
-          echo "❌ Error: Codespace no estuvo disponible después de 15 minutos."
-          exit 1
-
-      - name: Instalar y Autenticar el CLI de GitHub
-        env:
-          GH_TOKEN: ${{ secrets.PAT }}
-        run: |
-          sudo apt-get update && sudo apt-get install -y gh
-          echo "${GH_TOKEN}" | gh auth login --with-token
-          echo "✅ CLI de GitHub autenticado."
-
-      - name: Ejecutar comandos en el Codespace con gh CLI
-        run: |
-          CODESPACE_NAME="${{ steps.get-codespace-info.outputs.codespace_name }}"
-          echo "Ejecutando comandos en el codespace: $CODESPACE_NAME"
-          
-          # Comando 1: Listar contenido del directorio
-          echo "📂 Ejecutando comando 1: Listar contenido del directorio"
-          gh codespace exec -c "$CODESPACE_NAME" -- bash -c "cd /workspaces/GLMCookies && ls -la"
-          
-          # Comando 2: Verificar versión de Python
-          echo "🐍 Ejecutando comando 2: Verificar versión de Python"
-          gh codespace exec -c "$CODESPACE_NAME" -- python --version
-          
-          # Comando 3: Instalar dependencias
-          echo "📦 Ejecutando comando 3: Instalar dependencias"
-          gh codespace exec -c "$CODESPACE_NAME" -- bash -c "cd /workspaces/GLMCookies && pip install -r requirements.txt"
-          
-          echo "✅ Todos los comandos se ejecutaron."
-
-      - name: Detener Codespace
-        if: always() # Este paso se ejecuta siempre
-        env:
-          GH_TOKEN: ${{ secrets.PAT }}
-        run: |
-          CODESPACE_NAME="${{ steps.get-codespace-info.outputs.codespace_name }}"
-          echo "🛑 Deteniendo el codespace: $CODESPACE_NAME..."
-          # Re-autenticamos aquí por si acaso, es una buena práctica en pasos 'always()'
-          echo "${GH_TOKEN}" | gh auth login --with-token
-          gh codespace stop -c "$CODESPACE_NAME"
-          echo "Codespace detenido."
+          echo "Si ambos puntos anteriores son correctos, el token tiene el formato correcto."
