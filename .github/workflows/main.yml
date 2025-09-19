@@ -34,21 +34,28 @@ jobs:
         run: |
           echo "Buscando codespace para el repositorio ${{ github.repository }}..."
           
-          # Obtener la lista de codespaces
-          response=$(gh codespace list --json name,id,repository,state)
+          # Obtener la lista de codespaces con los campos disponibles
+          response=$(gh codespace list --json name,repository,state,displayName)
           
-          # Extraer el nombre y el ID del codespace para este repositorio usando jq
-          codespace_name=$(echo "$response" | jq -r '.[] | select(.repository.full_name == "${{ github.repository }}") | .name')
-          codespace_id=$(echo "$response" | jq -r '.[] | select(.repository.full_name == "${{ github.repository }}") | .id')
+          # Mostrar la respuesta para depuración
+          echo "Respuesta de codespaces:"
+          echo "$response" | jq .
+          
+          # Extraer el nombre del codespace para este repositorio
+          # El campo repository es un objeto con la propiedad fullName
+          codespace_name=$(echo "$response" | jq -r '.[] | select(.repository.fullName == "${{ github.repository }}") | .name')
+          codespace_display=$(echo "$response" | jq -r '.[] | select(.repository.fullName == "${{ github.repository }}") | .displayName')
           
           if [ "$codespace_name" = "null" ] || [ -z "$codespace_name" ]; then
             echo "Error: No se encontró un codespace para el repositorio ${{ github.repository }}"
+            echo "Respuesta completa:"
+            echo "$response" | jq .
             exit 1
           fi
           
-          echo "Codespace encontrado: $codespace_name (ID: $codespace_id)"
+          echo "Codespace encontrado: $codespace_name (Display: $codespace_display)"
           echo "codespace_name=$codespace_name" >> $GITHUB_OUTPUT
-          echo "codespace_id=$codespace_id" >> $GITHUB_OUTPUT
+          echo "codespace_display=$codespace_display" >> $GITHUB_OUTPUT
 
       - name: Iniciar Codespace
         id: start-codespace
