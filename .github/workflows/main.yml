@@ -67,15 +67,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT }}
         run: |
-          # Instalar gh CLI
-          sudo apt-get update
-          sudo apt-get install -y gh
+          # Instalar gh CLI (aunque ya esté, es una buena práctica)
+          sudo apt-get update && sudo apt-get install -y gh
           
           # Autenticar
           echo "${GH_TOKEN}" | gh auth login --with-token
-          echo "✅ CLI de GitHub autenticado."
           
-          # Verificar que podemos ver el codespace
+          # --- PASO DE DEPURACIÓN AÑADIDO ---
+          # Verificar el estado de la autenticación y los scopes del token
+          echo "Verificando los scopes del token..."
+          gh auth status -t
+          # ----------------------------------
+          
+          echo "✅ CLI de GitHub autenticado. Verificando acceso a codespaces..."
           gh codespace list
 
       - name: Ejecutar comandos en el Codespace con gh CLI
