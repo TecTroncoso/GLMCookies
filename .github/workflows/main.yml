@@ -12,9 +12,6 @@ env:
 jobs:
   manage-codespace:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: write
     
     steps:
       - name: Checkout repository
@@ -24,7 +21,7 @@ jobs:
         run: |
           gh --version
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.CODESPACES_TOKEN }}
 
       - name: Detect and Start Codespace
         id: start-codespace
@@ -88,7 +85,7 @@ jobs:
             done
           fi
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.CODESPACES_TOKEN }}
 
       - name: Execute command in Codespace
         id: execute-command
@@ -110,7 +107,7 @@ jobs:
             exit $COMMAND_EXIT_CODE
           fi
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.CODESPACES_TOKEN }}
 
       - name: Stop Codespace
         if: always() # Ejecuta incluso si los pasos anteriores fallan
