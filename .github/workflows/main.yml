@@ -24,7 +24,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.CODESPACES_TOKEN }}
 
       - name: Detect and Start Codespace
-        id: get-codespace-info
+        id: start-codespace
         run: |
           echo "🔍 Detecting codespaces for this repository..."
           
@@ -45,7 +45,7 @@ jobs:
           fi
           
           echo "✅ Found codespace: $CODESPACE_NAME"
-          echo "codespace_name=$CODESPACE_NAME" >> $GITHUB_OUTPUT
+          echo "CODESPACE_NAME=$CODESPACE_NAME" >> $GITHUB_OUTPUT
           
           # Verificar el estado actual usando gh codespace list
           CURRENT_STATUS=$(gh codespace list --json name,state --jq ".[] | select(.name == \"$CODESPACE_NAME\") | .state")
@@ -98,7 +98,7 @@ jobs:
       - name: Verify Codespace File Structure
         id: verify-files
         run: |
-          CODESPACE_NAME="${{ steps.get-codespace-info.outputs.codespace_name }}"
+          CODESPACE_NAME="${{ steps.start-codespace.outputs.CODESPACE_NAME }}"
           echo "📁 Checking file structure in codespace..."
           
           # Verificar la estructura de archivos
@@ -114,7 +114,7 @@ jobs:
       - name: Execute command in Codespace
         id: execute-command
         run: |
-          CODESPACE_NAME="${{ steps.get-codespace-info.outputs.codespace_name }}"
+          CODESPACE_NAME="${{ steps.start-codespace.outputs.CODESPACE_NAME }}"
           echo "📋 Executing command in codespace: $COMMAND_TO_RUN"
           
           # Verificar si el archivo existe antes de ejecutar
@@ -145,14 +145,44 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.CODESPACES_TOKEN }}
 
-      - name: Detener Codespace
-        if: always()
+      - name: Stop Codespace
+        if: always() # Ejecuta incluso si los pasos anteriores fallan
         run: |
-          CODESPACE_NAME="${{ steps.get-codespace-info.outputs.codespace_name }}"
-          echo "🛑 Deteniendo el codespace..."
-          gh codespace stop -c "$CODESPACE_NAME"
+          CODESPACE_NAME="${{ steps.start-codespace.outputs.CODESPACE_NAME }}"
+          
+          if [ -z "$CODESPACE_NAME" ]; then
+            echo "⚠️ No codespace name available, skipping stop"
+            exit 0
+          fi
+          
+          echo "🛑 Stopping codespace: $CODESPACE_NAME"
+          
+          # Intentar usar gh codespace stop primero
+          if gh codespace stop -c "$CODESPACE_NAME" 2>/dev/null; then
+            echo "✅ Codespace stopped using GitHub CLI"
+          else
+            echo "⚠️ GitHub CLI stop failed, trying API REST..."
+            # Usar API REST para parar el codespace
+            RESPONSE=$(curl -s -X POST \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/user/codespaces/$CODESPACE_NAME/stop")
+            
+            if echo "$RESPONSE" | jq -e '.message' >/dev/null 2>&1; then
+              echo "⚠️ API Response: $RESPONSE"
+              echo "⚠️ Failed to stop codespace via API, but continuing..."
+            else
+              echo "✅ Codespace stop requested via API"
+            fi
+          fi
+          
+          # Verificar que se haya detenido
+          sleep 10
+          STATUS=$(gh codespace list --json name,state --jq ".[] | select(.name == \"$CODESPACE_NAME\") | .state" || echo "unknown")
+          echo "Final codespace status: $STATUS"
         env:
-          GITHUB_TOKEN: ${{ secrets.CODESPACES_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use consistent token
 
       - name: Send notification on failure
         if: failure()
