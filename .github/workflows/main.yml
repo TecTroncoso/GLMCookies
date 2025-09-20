@@ -7,7 +7,7 @@ on:
   workflow_dispatch: # Permite ejecución manual
 
 env:
-  COMMAND_TO_RUN: "npm test" # Reemplaza con el comando que quieres ejecutar
+  COMMAND_TO_RUN: "python main.py" # Reemplaza con el comando que quieres ejecutar
 
 jobs:
   manage-codespace:
