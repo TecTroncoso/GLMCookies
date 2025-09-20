@@ -48,14 +48,15 @@ jobs:
           echo "CODESPACE_NAME=$CODESPACE_NAME" >> $GITHUB_OUTPUT
           
           # Verificar el estado actual
-          CURRENT_STATUS=$(gh codespace view -c $CODESPACE_NAME --json state --jq '.state')
+          CURRENT_STATUS=$(gh codespace view --json state --jq '.state' <<< "$CODESPACE_NAME" 2>/dev/null || echo "Unknown")
           echo "Current codespace status: $CURRENT_STATUS"
           
           if [ "$CURRENT_STATUS" = "Available" ]; then
             echo "✅ Codespace is already running"
           else
             echo "🚀 Starting codespace: $CODESPACE_NAME"
-            gh codespace start -c $CODESPACE_NAME || {
+            # Para GitHub CLI 2.x, necesitamos usar el comando interactivo o especificar directamente
+            echo "$CODESPACE_NAME" | gh codespace start || {
               echo "❌ Failed to start codespace"
               gh codespace list
               exit 1
@@ -67,7 +68,8 @@ jobs:
             
             # Verificar el estado con reintentos
             for i in {1..6}; do
-              STATUS=$(gh codespace view -c $CODESPACE_NAME --json state --jq '.state')
+              # Usar el nombre del codespace en el comando view
+              STATUS=$(gh codespace view --json state --jq '.state' <<< "$CODESPACE_NAME" 2>/dev/null || echo "Starting")
               echo "Attempt $i/6 - Codespace status: $STATUS"
               
               if [ "$STATUS" = "Available" ]; then
@@ -93,8 +95,8 @@ jobs:
           CODESPACE_NAME="${{ steps.start-codespace.outputs.CODESPACE_NAME }}"
           echo "📋 Executing command in codespace: $COMMAND_TO_RUN"
           
-          # Ejecutar el comando en el codespace
-          gh codespace ssh -c $CODESPACE_NAME -- "$COMMAND_TO_RUN"
+          # Ejecutar el comando en el codespace usando input piping
+          echo "$CODESPACE_NAME" | gh codespace ssh -- "$COMMAND_TO_RUN"
           
           # Capturar el código de salida
           COMMAND_EXIT_CODE=$?
@@ -120,13 +122,13 @@ jobs:
           fi
           
           echo "🛑 Stopping codespace: $CODESPACE_NAME"
-          gh codespace stop -c $CODESPACE_NAME || {
+          echo "$CODESPACE_NAME" | gh codespace stop || {
             echo "⚠️ Failed to stop codespace, but continuing..."
           }
           
           # Verificar que se haya detenido
           sleep 10
-          STATUS=$(gh codespace view -c $CODESPACE_NAME --json state --jq '.state' 2>/dev/null || echo "unknown")
+          STATUS=$(gh codespace view --json state --jq '.state' <<< "$CODESPACE_NAME" 2>/dev/null || echo "unknown")
           echo "Final codespace status: $STATUS"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
