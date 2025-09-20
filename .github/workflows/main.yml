@@ -158,7 +158,7 @@ jobs:
           echo "🛑 Stopping codespace: $CODESPACE_NAME"
           
           # Intentar usar gh codespace stop primero
-          if gh codespace stop -c "$CODESPACE_NAME" 2>/dev/null; then
+          if gh codespace stop --codespace "$CODESPACE_NAME" 2>/dev/null; then
             echo "✅ Codespace stopped using GitHub CLI"
           else
             echo "⚠️ GitHub CLI stop failed, trying API REST..."
@@ -194,3 +194,4 @@ jobs:
         if: success()
         run: |
           echo "✅ Weekly codespace automation completed successfully!"
+
