@@ -7,7 +7,7 @@ on:
   workflow_dispatch: # Permite ejecución manual
 
 env:
-  COMMAND_TO_RUN: "python main.py" # Reemplaza con el comando que quieres ejecutar
+  COMMAND_TO_RUN: "cd /workspaces/GLMCookies && python main.py" # Fixed path
 
 jobs:
   manage-codespace:
@@ -21,7 +21,7 @@ jobs:
         run: |
           gh --version
         env:
-          GITHUB_TOKEN: ${{ secrets.CODESPACES_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use consistent token
 
       - name: Detect and Start Codespace
         id: start-codespace
@@ -47,28 +47,27 @@ jobs:
           echo "✅ Found codespace: $CODESPACE_NAME"
           echo "CODESPACE_NAME=$CODESPACE_NAME" >> $GITHUB_OUTPUT
           
-          # Verificar el estado actual usando API REST
-          CURRENT_STATUS=$(curl -s \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/user/codespaces/$CODESPACE_NAME" | jq -r '.state' 2>/dev/null || echo "Unknown")
+          # Verificar el estado actual usando gh codespace list
+          CURRENT_STATUS=$(gh codespace list --json name,state --jq ".[] | select(.name == \"$CODESPACE_NAME\") | .state")
           echo "Current codespace status: $CURRENT_STATUS"
           
           if [ "$CURRENT_STATUS" = "Available" ]; then
             echo "✅ Codespace is already running"
           else
             echo "🚀 Starting codespace: $CODESPACE_NAME"
-            # GitHub CLI no tiene comando 'start', usamos la API REST
-            curl -s -X POST \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/user/codespaces/$CODESPACE_NAME/start" || {
-              echo "❌ Failed to start codespace"
-              gh codespace list
-              exit 1
-            }
+            # Usar gh codespace start si está disponible, sino usar API REST
+            if ! gh codespace start --codespace "$CODESPACE_NAME" 2>/dev/null; then
+              echo "Using API REST to start codespace..."
+              curl -s -X POST \
+                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/user/codespaces/$CODESPACE_NAME/start" || {
+                echo "❌ Failed to start codespace"
+                gh codespace list
+                exit 1
+              }
+            fi
             
             # Esperar a que el codespace esté completamente activo
             echo "⏳ Waiting for codespace to be ready..."
@@ -76,12 +75,7 @@ jobs:
             
             # Verificar el estado con reintentos
             for i in {1..6}; do
-              # Usar API REST para verificar el estado
-              STATUS=$(curl -s \
-                -H "Authorization: Bearer $GITHUB_TOKEN" \
-                -H "Accept: application/vnd.github+json" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "https://api.github.com/user/codespaces/$CODESPACE_NAME" | jq -r '.state' 2>/dev/null || echo "Starting")
+              STATUS=$(gh codespace list --json name,state --jq ".[] | select(.name == \"$CODESPACE_NAME\") | .state")
               echo "Attempt $i/6 - Codespace status: $STATUS"
               
               if [ "$STATUS" = "Available" ]; then
@@ -99,7 +93,23 @@ jobs:
             done
           fi
         env:
-          GITHUB_TOKEN: ${{ secrets.CODESPACES_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use consistent token
+
+      - name: Verify Codespace File Structure
+        id: verify-files
+        run: |
+          CODESPACE_NAME="${{ steps.start-codespace.outputs.CODESPACE_NAME }}"
+          echo "📁 Checking file structure in codespace..."
+          
+          # Verificar la estructura de archivos
+          gh codespace ssh --codespace "$CODESPACE_NAME" -- "pwd && ls -la"
+          
+          # Verificar si main.py existe en diferentes ubicaciones
+          echo "🔍 Searching for main.py..."
+          gh codespace ssh --codespace "$CODESPACE_NAME" -- "find /workspaces -name 'main.py' 2>/dev/null || echo 'main.py not found in /workspaces'"
+          gh codespace ssh --codespace "$CODESPACE_NAME" -- "find /home/vscode -name 'main.py' 2>/dev/null || echo 'main.py not found in /home/vscode'"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Execute command in Codespace
         id: execute-command
@@ -107,8 +117,20 @@ jobs:
           CODESPACE_NAME="${{ steps.start-codespace.outputs.CODESPACE_NAME }}"
           echo "📋 Executing command in codespace: $COMMAND_TO_RUN"
           
-          # Ejecutar el comando en el codespace usando SSH
-          gh codespace ssh --codespace "$CODESPACE_NAME" -- "$COMMAND_TO_RUN"
+          # Verificar si el archivo existe antes de ejecutar
+          if gh codespace ssh --codespace "$CODESPACE_NAME" -- "test -f /workspaces/GLMCookies/main.py"; then
+            echo "✅ main.py found, executing command..."
+            gh codespace ssh --codespace "$CODESPACE_NAME" -- "$COMMAND_TO_RUN"
+          elif gh codespace ssh --codespace "$CODESPACE_NAME" -- "test -f /home/vscode/main.py"; then
+            echo "✅ main.py found in home directory, adjusting command..."
+            gh codespace ssh --codespace "$CODESPACE_NAME" -- "cd /home/vscode && python main.py"
+          else
+            echo "❌ main.py not found in expected locations"
+            echo "Available files:"
+            gh codespace ssh --codespace "$CODESPACE_NAME" -- "ls -la /workspaces/ 2>/dev/null || true"
+            gh codespace ssh --codespace "$CODESPACE_NAME" -- "ls -la /home/vscode/ 2>/dev/null || true"
+            exit 1
+          fi
           
           # Capturar el código de salida
           COMMAND_EXIT_CODE=$?
@@ -121,7 +143,7 @@ jobs:
             exit $COMMAND_EXIT_CODE
           fi
         env:
-          GITHUB_TOKEN: ${{ secrets.CODESPACES_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Stop Codespace
         if: always() # Ejecuta incluso si los pasos anteriores fallan
@@ -134,25 +156,33 @@ jobs:
           fi
           
           echo "🛑 Stopping codespace: $CODESPACE_NAME"
-          # Usar API REST para parar el codespace
-          curl -s -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/user/codespaces/$CODESPACE_NAME/stop" || {
-            echo "⚠️ Failed to stop codespace, but continuing..."
-          }
+          
+          # Intentar usar gh codespace stop primero
+          if gh codespace stop --codespace "$CODESPACE_NAME" 2>/dev/null; then
+            echo "✅ Codespace stopped using GitHub CLI"
+          else
+            echo "⚠️ GitHub CLI stop failed, trying API REST..."
+            # Usar API REST para parar el codespace
+            RESPONSE=$(curl -s -X POST \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/user/codespaces/$CODESPACE_NAME/stop")
+            
+            if echo "$RESPONSE" | jq -e '.message' >/dev/null 2>&1; then
+              echo "⚠️ API Response: $RESPONSE"
+              echo "⚠️ Failed to stop codespace via API, but continuing..."
+            else
+              echo "✅ Codespace stop requested via API"
+            fi
+          fi
           
           # Verificar que se haya detenido
           sleep 10
-          STATUS=$(curl -s \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/user/codespaces/$CODESPACE_NAME" | jq -r '.state' 2>/dev/null || echo "unknown")
+          STATUS=$(gh codespace list --json name,state --jq ".[] | select(.name == \"$CODESPACE_NAME\") | .state" || echo "unknown")
           echo "Final codespace status: $STATUS"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use consistent token
 
       - name: Send notification on failure
         if: failure()
