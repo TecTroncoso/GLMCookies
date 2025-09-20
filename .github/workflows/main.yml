@@ -1,124 +1,146 @@
-name: Codespace Automation
+name: Weekly Codespace Automation
 
 on:
-  workflow_dispatch:  # Permite ejecución manual
   schedule:
-    - cron: '0 8 * * 1-5'  # Ejecutar días laborables a las 8 AM
+    # Ejecuta cada lunes a las 9:00 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch: # Permite ejecución manual
+
+env:
+  COMMAND_TO_RUN: "npm test" # Reemplaza con el comando que quieres ejecutar
 
 jobs:
-  codespace-task:
+  manage-codespace:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      codespaces: write
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Setup GitHub CLI
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          
-      - name: Install GitHub CLI
         run: |
-          # Install GitHub CLI
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-          sudo apt update
-          sudo apt install gh -y
-          
-      - name: Authenticate GitHub CLI
+          gh --version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect and Start Codespace
+        id: start-codespace
         run: |
-          echo "${{ secrets.PAT }}" | gh auth login --with-token
+          echo "🔍 Detecting codespaces for this repository..."
           
-      - name: Listar Codespaces y obtener información
-        id: get-codespace-info
-        run: |
-          echo "Buscando codespace para el repositorio ${{ github.repository }}..."
+          # Obtener el owner y nombre del repo actual
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${{ github.event.repository.name }}"
           
-          # Obtener la lista de codespaces con los campos disponibles
-          response=$(gh codespace list --json name,repository,state,displayName)
+          echo "Repository: $REPO_OWNER/$REPO_NAME"
           
-          # Mostrar la respuesta para depuración
-          echo "Respuesta de codespaces:"
-          echo "$response" | jq .
+          # Listar todos los codespaces y filtrar por el repositorio actual
+          CODESPACE_NAME=$(gh codespace list --json name,repository --jq ".[] | select(.repository == \"$REPO_OWNER/$REPO_NAME\") | .name" | head -n 1)
           
-          # Extraer el nombre del codespace para este repositorio
-          # El campo repository es un string simple, no un objeto
-          codespace_name=$(echo "$response" | jq -r ".[] | select(.repository == \"${{ github.repository }}\") | .name")
-          codespace_display=$(echo "$response" | jq -r ".[] | select(.repository == \"${{ github.repository }}\") | .displayName")
-          codespace_state=$(echo "$response" | jq -r ".[] | select(.repository == \"${{ github.repository }}\") | .state")
-          
-          if [ "$codespace_name" = "null" ] || [ -z "$codespace_name" ]; then
-            echo "Error: No se encontró un codespace para el repositorio ${{ github.repository }}"
-            echo "Respuesta completa:"
-            echo "$response" | jq .
+          if [ -z "$CODESPACE_NAME" ]; then
+            echo "❌ No codespace found for this repository"
+            echo "Available codespaces:"
+            gh codespace list
             exit 1
           fi
           
-          echo "Codespace encontrado: $codespace_name"
-          echo "Display Name: $codespace_display"
-          echo "Estado actual: $codespace_state"
-          echo "codespace_name=$codespace_name" >> $GITHUB_OUTPUT
-          echo "codespace_display=$codespace_display" >> $GITHUB_OUTPUT
-          echo "codespace_state=$codespace_state" >> $GITHUB_OUTPUT
-
-      - name: Iniciar Codespace (si está apagado)
-        if: steps.get-codespace-info.outputs.codespace_state != 'Available'
-        run: |
-          echo "Iniciando codespace: ${{ steps.get-codespace-info.outputs.codespace_name }}"
-          gh codespace start -c "${{ steps.get-codespace-info.outputs.codespace_name }}"
-
-      - name: Esperar a que el Codespace esté disponible (si se inició)
-        if: steps.get-codespace-info.outputs.codespace_state != 'Available'
-        run: |
-          echo "Esperando a que el codespace esté disponible (tiempo máximo: 15 minutos)..."
-          CODESPACE_NAME="${{ steps.get-codespace-info.outputs.codespace_name }}"
+          echo "✅ Found codespace: $CODESPACE_NAME"
+          echo "CODESPACE_NAME=$CODESPACE_NAME" >> $GITHUB_OUTPUT
           
-          for i in {1..90}; do
-            echo "=== Intento $i de 90 ==="
-            
-            # Verificar estado del codespace
-            status=$(gh codespace list --json name,state | jq -r ".[] | select(.name == \"$CODESPACE_NAME\") | .state")
-            
-            echo "Estado del codespace: $status"
-            
-            if [ "$status" = "Available" ]; then
-              echo "✅ Codespace está disponible después de $((i*10)) segundos"
-              break
-            fi
-            
-            if (( i % 10 == 0 )); then
-              elapsed_minutes=$((i/6))
-              echo "⏳ Tiempo transcurrido: ${elapsed_minutes} minutos"
-            fi
-            
-            sleep 10
-          done
+          # Verificar el estado actual
+          CURRENT_STATUS=$(gh codespace view --codespace $CODESPACE_NAME --json state --jq '.state')
+          echo "Current codespace status: $CURRENT_STATUS"
           
-          if [ "$status" != "Available" ]; then
-            echo "❌ Error: Codespace no está disponible después de 15 minutos"
-            exit 1
+          if [ "$CURRENT_STATUS" = "Available" ]; then
+            echo "✅ Codespace is already running"
+          else
+            echo "🚀 Starting codespace: $CODESPACE_NAME"
+            gh codespace start --codespace $CODESPACE_NAME || {
+              echo "❌ Failed to start codespace"
+              gh codespace list
+              exit 1
+            }
+            
+            # Esperar a que el codespace esté completamente activo
+            echo "⏳ Waiting for codespace to be ready..."
+            sleep 30
+            
+            # Verificar el estado con reintentos
+            for i in {1..6}; do
+              STATUS=$(gh codespace view --codespace $CODESPACE_NAME --json state --jq '.state')
+              echo "Attempt $i/6 - Codespace status: $STATUS"
+              
+              if [ "$STATUS" = "Available" ]; then
+                echo "✅ Codespace is ready!"
+                break
+              fi
+              
+              if [ $i -eq 6 ]; then
+                echo "❌ Codespace failed to start after multiple attempts"
+                exit 1
+              fi
+              
+              echo "⏳ Waiting 30 more seconds..."
+              sleep 30
+            done
           fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Ejecutar comandos en el Codespace
+      - name: Execute command in Codespace
+        id: execute-command
         run: |
-          echo "Ejecutando comandos en el codespace..."
-          CODESPACE_NAME="${{ steps.get-codespace-info.outputs.codespace_name }}"
+          CODESPACE_NAME="${{ steps.start-codespace.outputs.CODESPACE_NAME }}"
+          echo "📋 Executing command in codespace: $COMMAND_TO_RUN"
           
-          # Comando 1: Navegar al directorio y listar contenido
-          echo "📂 Ejecutando comando 1: Listar contenido del directorio"
-          gh codespace ssh -c "$CODESPACE_NAME" -- "cd /workspaces/GLMCookies && ls -la"
+          # Ejecutar el comando en el codespace
+          gh codespace ssh --codespace $CODESPACE_NAME -- "$COMMAND_TO_RUN"
           
-          # Comando 2: Verificar versión de Python
-          echo "🐍 Ejecutando comando 2: Verificar versión de Python"
-          gh codespace ssh -c "$CODESPACE_NAME" -- "python --version"
+          # Capturar el código de salida
+          COMMAND_EXIT_CODE=$?
+          echo "Command exit code: $COMMAND_EXIT_CODE"
           
-          # Comando 3: Instalar dependencias (si existe requirements.txt)
-          echo "📦 Ejecutando comando 3: Instalar dependencias"
-          gh codespace ssh -c "$CODESPACE_NAME" -- "cd /workspaces/GLMCookies && pip install -r requirements.txt"
+          if [ $COMMAND_EXIT_CODE -eq 0 ]; then
+            echo "✅ Command executed successfully"
+          else
+            echo "❌ Command failed with exit code: $COMMAND_EXIT_CODE"
+            exit $COMMAND_EXIT_CODE
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Detener Codespace
-        if: always()
+      - name: Stop Codespace
+        if: always() # Ejecuta incluso si los pasos anteriores fallan
         run: |
-          CODESPACE_NAME="${{ steps.get-codespace-info.outputs.codespace_name }}"
-          echo "🛑 Deteniendo el codespace..."
-          gh codespace stop -c "$CODESPACE_NAME"
+          CODESPACE_NAME="${{ steps.start-codespace.outputs.CODESPACE_NAME }}"
+          
+          if [ -z "$CODESPACE_NAME" ]; then
+            echo "⚠️ No codespace name available, skipping stop"
+            exit 0
+          fi
+          
+          echo "🛑 Stopping codespace: $CODESPACE_NAME"
+          gh codespace stop --codespace $CODESPACE_NAME || {
+            echo "⚠️ Failed to stop codespace, but continuing..."
+          }
+          
+          # Verificar que se haya detenido
+          sleep 10
+          STATUS=$(gh codespace view --codespace $CODESPACE_NAME --json state --jq '.state' 2>/dev/null || echo "unknown")
+          echo "Final codespace status: $STATUS"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Send notification on failure
+        if: failure()
+        run: |
+          echo "🚨 Workflow failed! Check the logs for details."
+          # Aquí podrías agregar notificaciones adicionales como Slack, email, etc.
+          
+      - name: Send success notification
+        if: success()
+        run: |
+          echo "✅ Weekly codespace automation completed successfully!"
