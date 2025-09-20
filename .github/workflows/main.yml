@@ -7,7 +7,7 @@ on:
   workflow_dispatch: # Permite ejecución manual
 
 env:
-  COMMAND_TO_RUN: "cd /workspaces/GLMCookies && python main.py" # Fixed path
+  COMMAND_TO_RUN: "cd /workspaces/GLMCookies && GLM_USERNAME='${{ secrets.GLM_USERNAME }}' GLM_PASSWORD='${{ secrets.GLM_PASSWORD }}' python main.py" # Fixed path with env vars
 
 jobs:
   manage-codespace:
